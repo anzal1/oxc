@@ -24,6 +24,7 @@ import {
   tokens,
   tokensLen,
   tokensInt32,
+  TOKEN_SIZE,
   TOKEN_SIZE32,
 } from "./tokens.ts";
 import { EMPTY_INT32_ARRAY } from "../utils/typed_arrays.ts";
@@ -63,6 +64,7 @@ const MERGED_SIZE = 16;
 export const MERGED_SIZE32_SHIFT = 2; // 4 x u32s per entry (16 bytes)
 export const MERGED_SIZE32 = 1 << MERGED_SIZE32_SHIFT; // 4 x u32s per entry
 debugAssert(MERGED_SIZE === MERGED_SIZE32 * 4);
+debugAssert(MERGED_SIZE === TOKEN_SIZE, "Size of token and merged entry must be equal");
 
 export const MERGED_ORIGINAL_INDEX_OFFSET32 = 1; // u32 index of the `original_index` field within an entry
 export const MERGED_TYPE_OFFSET32 = 2; // u32 index of the `is_comment` field within an entry
