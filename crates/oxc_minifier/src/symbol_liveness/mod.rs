@@ -95,7 +95,7 @@ use oxc_allocator::{Allocator, ArenaVec, BitSet, GetAllocator};
 use oxc_ast::ast::*;
 #[cfg(debug_assertions)]
 use oxc_ast_visit::{VisitJs, walk_js::walk_function};
-use oxc_ecmascript::BoundNames;
+use oxc_ecmascript::{BoundNames, IsSimpleParameterList};
 use oxc_semantic::Scoping;
 use oxc_span::SourceType;
 use oxc_syntax::{reference::ReferenceId, scope::ScopeId, symbol::SymbolId};
@@ -112,7 +112,8 @@ use crate::{CompressOptions, CompressOptionsUnused, TraverseCtx};
 /// without an ordinary reference.
 pub struct SymbolLiveness<'a> {
     /// Bindings with a runtime observer independent of resolved references:
-    /// module exports, Script roots, Annex B aliases, and `using` disposal.
+    /// module exports, Script roots, mapped arguments, Annex B aliases, and
+    /// `using` disposal.
     implicitly_observable: BitSet<'a>,
     recursive_functions: Option<FunctionGraph<'a>>,
 }
@@ -453,12 +454,9 @@ impl<'a> GraphScratch<'a> {
     }
 }
 
-/// Normalize hook: register a function declaration as a potential graph
-/// candidate.
+/// Normalize hook: record parameters exposed through mapped arguments and
+/// register function declarations as potential graph candidates.
 pub fn register_function(function: &Function<'_>, ctx: &mut TraverseCtx<'_>) {
-    if !function.is_declaration() {
-        return;
-    }
     if ctx.options().unused == CompressOptionsUnused::Keep {
         return;
     }
@@ -466,7 +464,17 @@ pub fn register_function(function: &Function<'_>, ctx: &mut TraverseCtx<'_>) {
     let allocator = ctx.allocator();
     let TraverseCtx { state, scoping, .. } = ctx;
     if let Some(liveness) = state.symbols.liveness_mut() {
-        liveness.register_function(function, source_type, scoping.scoping(), allocator);
+        // Sloppy functions with simple parameter lists alias their parameters
+        // through `arguments`, even when a parameter has no resolved reads.
+        // A `var` or function redeclaration must not make its writes removable.
+        if !scoping.scoping().scope_flags(function.scope_id()).is_strict_mode()
+            && function.params.is_simple_parameter_list()
+        {
+            liveness.mark_bound_names(&*function.params);
+        }
+        if function.is_declaration() {
+            liveness.register_function(function, source_type, scoping.scoping(), allocator);
+        }
     }
 }
 
