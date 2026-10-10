@@ -144,6 +144,69 @@ fn parameter_writes_preserve_mapped_arguments() {
 }
 
 #[test]
+fn inline_unobservable_parameter_aliases() {
+    // https://github.com/oxc-project/oxc/pull/27494#issuecomment-6085972345
+    let options = CompressOptions::smallest();
+    for source_type in [SourceType::script(), SourceType::cjs()] {
+        for (source, expected) in [
+            (
+                "function h(a, b) { var a = b; return typeof a; }",
+                "function h(a, b) { return typeof b; }",
+            ),
+            ("function h(a, b) { var a = b; return a; }", "function h(a, b) { return b; }"),
+            (
+                "function h(a, b, b) { var a = b; return typeof a; }",
+                "function h(a, b, b) { return typeof b; }",
+            ),
+        ] {
+            test_options_source_type(
+                &format!("{source} use(h, h);"),
+                &format!("{expected} use(h, h);"),
+                source_type,
+                &options,
+            );
+        }
+    }
+}
+
+#[test]
+fn observable_parameter_aliases_are_not_inlined() {
+    let options = CompressOptions::smallest();
+    for source_type in [SourceType::script(), SourceType::cjs()] {
+        for source in [
+            "function h(a, b) { var a = b; return [arguments, a]; }",
+            "function h(a, b) { save(arguments); var a = b; return typeof a; }",
+            "function h(a, b) { var a = b; return () => a; }",
+            "function h(a, b) { var a = b; return +a; }",
+            "function h(a, b) { var a = inspect.value; return typeof a; }",
+            "function h(a, b) { var a = inspect(); return typeof a; }",
+            "function h(a, b) { var a = external; return typeof a; }",
+            "async function h(a, b) { var a = b; return a; }",
+            "function* h(a, b) { var a = b; return a; }",
+        ] {
+            test_same_options_source_type(&format!("{source} use(h, h);"), source_type, &options);
+        }
+        for (source, expected) in [
+            (
+                "function h(a, b) { var a = b; inspect(); return typeof a; }",
+                "function h(a, b) { var a = b; return inspect(), typeof a; }",
+            ),
+            (
+                "function h(a, b) { var a = b; inspect.value; return typeof a; }",
+                "function h(a, b) { var a = b; return inspect.value, typeof a; }",
+            ),
+        ] {
+            test_options_source_type(
+                &format!("{source} use(h, h);"),
+                &format!("{expected} use(h, h);"),
+                source_type,
+                &options,
+            );
+        }
+    }
+}
+
+#[test]
 fn unmapped_parameters_allow_unused_writes() {
     let options = CompressOptions::smallest();
     test_options_source_type(

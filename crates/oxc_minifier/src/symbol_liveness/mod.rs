@@ -98,7 +98,9 @@ use oxc_ast_visit::{VisitJs, walk_js::walk_function};
 use oxc_ecmascript::{BoundNames, IsSimpleParameterList};
 use oxc_semantic::Scoping;
 use oxc_span::SourceType;
-use oxc_syntax::{reference::ReferenceId, scope::ScopeId, symbol::SymbolId};
+use oxc_syntax::{
+    operator::UnaryOperator, reference::ReferenceId, scope::ScopeId, symbol::SymbolId,
+};
 
 use crate::{CompressOptions, CompressOptionsUnused, TraverseCtx};
 
@@ -469,6 +471,7 @@ pub fn register_function(function: &Function<'_>, ctx: &mut TraverseCtx<'_>) {
         // A `var` or function redeclaration must not make its writes removable.
         if !scoping.scoping().scope_flags(function.scope_id()).is_strict_mode()
             && function.params.is_simple_parameter_list()
+            && !has_unobservable_parameter_alias(function, scoping.scoping())
         {
             liveness.mark_bound_names(&*function.params);
         }
@@ -476,6 +479,55 @@ pub fn register_function(function: &Function<'_>, ctx: &mut TraverseCtx<'_>) {
             liveness.register_function(function, source_type, scoping.scoping(), allocator);
         }
     }
+}
+
+/// A parameter copy followed only by returning the copy (or its type) cannot
+/// expose mapped arguments or run code that observes them. Check the entire
+/// body: an earlier statement could have saved `arguments` for a later read.
+fn has_unobservable_parameter_alias(function: &Function<'_>, scoping: &Scoping) -> bool {
+    if function.r#async || function.generator {
+        return false;
+    }
+    let Some(body) = &function.body else { return false };
+    let [Statement::VariableDeclaration(declaration), Statement::ReturnStatement(ret)] =
+        body.statements.as_slice()
+    else {
+        return false;
+    };
+    if !declaration.kind.is_var() {
+        return false;
+    }
+    let [
+        VariableDeclarator {
+            id: BindingPattern::BindingIdentifier(binding),
+            init: Some(Expression::Identifier(value)),
+            ..
+        },
+    ] = declaration.declarations.as_slice()
+    else {
+        return false;
+    };
+    let read = match &ret.argument {
+        Some(Expression::Identifier(id)) => id,
+        Some(Expression::UnaryExpression(expr)) if expr.operator == UnaryOperator::Typeof => {
+            let Expression::Identifier(id) = &expr.argument else { return false };
+            id
+        }
+        _ => return false,
+    };
+    if scoping.get_reference(read.reference_id()).symbol_id() != Some(binding.symbol_id()) {
+        return false;
+    }
+    let Some(value_symbol_id) = scoping.get_reference(value.reference_id()).symbol_id() else {
+        return false;
+    };
+    let mut writes_parameter = false;
+    let mut reads_parameter = false;
+    function.params.bound_names(&mut |param| {
+        writes_parameter |= param.symbol_id() == binding.symbol_id();
+        reads_parameter |= param.symbol_id() == value_symbol_id;
+    });
+    writes_parameter && reads_parameter
 }
 
 /// Normalize hook: record resource bindings observed later by explicit
