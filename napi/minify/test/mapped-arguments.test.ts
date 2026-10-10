@@ -40,6 +40,15 @@ describe("mapped arguments", () => {
     ],
   ];
 
+  const returnedArgumentsCode = `
+    function f(a) {
+      var a = function() {};
+      return [arguments, a];
+    }
+    const result = f(1);
+    console.log(typeof result[0][0], result[0][0] === result[1]);
+  `;
+
   for (const mangle of [false, true]) {
     for (const filename of ["input.js", "input.cjs"]) {
       it.each(cases)(`preserves %s in ${filename}, mangle=${mangle}`, (_name, code) => {
@@ -47,6 +56,13 @@ describe("mapped arguments", () => {
         expect(result.errors).toEqual([]);
         expect(captureOutput(code)).toEqual([["foo", "foo"]]);
         expect(captureOutput(result.code)).toEqual([["foo", "foo"]]);
+      });
+
+      it(`preserves returned arguments in ${filename}, mangle=${mangle}`, () => {
+        const result = minifySync(filename, returnedArgumentsCode, { mangle });
+        expect(result.errors).toEqual([]);
+        expect(captureOutput(returnedArgumentsCode)).toEqual([["function", true]]);
+        expect(captureOutput(result.code)).toEqual([["function", true]]);
       });
     }
 
@@ -57,6 +73,13 @@ describe("mapped arguments", () => {
       // reproduces their module-mode arguments semantics.
       expect(captureOutput(`"use strict"; ${code}`)).toEqual([["foo", "bar"]]);
       expect(captureOutput(`"use strict"; ${result.code}`)).toEqual([["foo", "bar"]]);
+    });
+
+    it(`preserves strict returned arguments, mangle=${mangle}`, () => {
+      const result = minifySync("input.js", returnedArgumentsCode, { module: true, mangle });
+      expect(result.errors).toEqual([]);
+      expect(captureOutput(`"use strict"; ${returnedArgumentsCode}`)).toEqual([["number", false]]);
+      expect(captureOutput(`"use strict"; ${result.code}`)).toEqual([["number", false]]);
     });
   }
 });
